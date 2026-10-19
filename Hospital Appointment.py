@@ -3,10 +3,6 @@
 #   Python Intern Assignment — Intermediate Level
 # =============================================================================
 
-# ── LEGB DEMO ─────────────────────────────────────────────────────────────────
-# Global clinic config — read by functions via the Enclosing/Global scope.
-# Functions never write to these globals (no 'global' keyword), so the global
-# state is never accidentally mutated (that's the LEGB best-practice point).
 CLINIC_CONFIG = {
     "currency":         "PKR ",
     "senior_age":        60,
