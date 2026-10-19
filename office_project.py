@@ -1,188 +1,219 @@
-# 1. PRODUCTS 
+# E-Commerce Order Processing System
 
 products = {
-    "P001": {"name": "Laptop", "price": 1200, "stock": 10},
-    "P002": {"name": "Mouse", "price": 25, "stock": 50},
-    "P003": {"name": "Keyboard", "price": 75, "stock": 20},
-    "P004": {"name": "Monitor", "price": 300, "stock": 15}
+    "P001": {"name": "Laptop",   "price": 1200, "category": "Electronics", "stock": 10},
+    "P002": {"name": "Mouse",    "price": 25,   "category": "Accessories",  "stock": 50},
+    "P003": {"name": "Keyboard", "price": 75,   "category": "Accessories",  "stock": 20},
+    "P004": {"name": "Monitor",  "price": 300,  "category": "Electronics",  "stock": 15},
 }
-
-# 2. CUSTOMERS ORDERS 
 
 orders = [
     {
         "order_id": "ORD001", "customer": "Ali",
         "items": [{"product_id": "P001", "quantity": 1}, {"product_id": "P002", "quantity": 2}],
-        "payment_status": "paid"
+        "payment_status": "paid",
     },
     {
         "order_id": "ORD002", "customer": "Ahmed",
         "items": [{"product_id": "P003", "quantity": 2}, {"product_id": "P004", "quantity": 1}],
-        "payment_status": "paid"
+        "payment_status": "paid",
     },
     {
         "order_id": "ORD003", "customer": "Ali",
         "items": [{"product_id": "P002", "quantity": 5}],
-        "payment_status": "pending"
-    }
+        "payment_status": "pending",
+    },
 ]
 
-# Function to calculate the subtotal:
+LOW_STOCK_THRESHOLD    = 5
+VALID_PAYMENT_STATUSES = {"paid", "pending"}
+DISCOUNT_TIERS         = [(1000, 0.15), (500, 0.10), (200, 0.05)]
+SHIPPING_THRESHOLD     = 500
+SHIPPING_FEE           = 20.0
+
+
 def get_bill(order, products):
     total = 0
-    for item in order['items']:
-        pro_id = item['product_id']
-        qty = item['quantity']
-        price = products[pro_id]['price']
-        total += qty * price
+    for item in order.get("items", []):
+        pid = item.get("product_id")
+        if pid in products:
+            total += products[pid]["price"] * item.get("quantity", 0)
     return total
 
-# Function to calculate discount:
-def get_discount(bill):
-    if bill >= 1000:
-        return bill * 0.15  # 15% discount
-    elif bill >= 500:
-        return bill * 0.10  # 10% discount
-    elif bill >= 200:
-        return bill * 0.05  # 5% discount
-    else:
-        return 0.0
 
-# Function shipping cost:
-def get_shipping(bill):
-    if bill >= 500:
-        return 0.0
-    else:
-        return 20.0
+def get_discount(subtotal):
+    for threshold, rate in DISCOUNT_TIERS:
+        if subtotal >= threshold:
+            return round(subtotal * rate, 2)
+    return 0.0
 
-# Function to Check stock availability:
+
+def get_shipping(subtotal):
+    return 0.0 if subtotal >= SHIPPING_THRESHOLD else SHIPPING_FEE
+
+
 def order_is_valid(order, products):
-    if len(order['items']) == 0:
-        return False
-    for item in order['items']:
-        pro_id = item['product_id']
-        qty = item['quantity']
-        
-# Reject if product doesn't exist:
-    if pro_id not in products:
-        return False
-    if qty <= 0:
-        return False
-    if qty > products[pro_id]['stock']:
-        return False
-    return True
+    oid = order.get("order_id", "UNKNOWN")
 
-# Function to process order, deduct stock, and return summary
-def process_order(order, products):
-# Reject invalid orders immediately
-    if not order_is_valid(order, products):
-        return {"status": "rejected", "revenue": 0, "discount": 0, "shipping": 0}
-        
+    if not products:
+        return False, f"[{oid}] Product catalogue is empty."
+
+    items = order.get("items", [])
+    if not items:
+        return False, f"[{oid}] Order has no items."
+
+    payment = order.get("payment_status", "")
+    if payment not in VALID_PAYMENT_STATUSES:
+        return False, f"[{oid}] Invalid payment status: '{payment}'."
+
+    for item in items:
+        pid = item.get("product_id")
+        qty = item.get("quantity", 0)
+
+        if pid not in products:
+            return False, f"[{oid}] Unknown product ID: '{pid}'."
+
+        if isinstance(qty, bool) or not isinstance(qty, (int, float)) or qty <= 0:
+            return False, f"[{oid}] Quantity for '{pid}' must be a positive number (got {qty})."
+
+        if qty > products[pid]["stock"]:
+            return False, (f"[{oid}] Insufficient stock for '{products[pid]['name']}'. "
+                           f"Requested: {qty}, Available: {products[pid]['stock']}.")
+
+    return True, ""
+
+
+def update_inventory(order, products):
+    for item in order["items"]:
+        pid = item.get("product_id")
+        qty = item.get("quantity", 0)
+        if pid in products and qty > 0:
+            products[pid]["stock"] -= qty
+
+
+def process_order(order, products, **options):
+    apply_discount   = options.get("apply_discount",   True)
+    include_shipping = options.get("include_shipping", True)
+
+    oid      = order.get("order_id", "UNKNOWN")
+    customer = order.get("customer", "Unknown")
+    payment  = order.get("payment_status", "")
+
+    is_valid, reason = order_is_valid(order, products)
+    if not is_valid:
+        print(f"  [REJECTED]  {oid} ({customer}): {reason}")
+        return {"order_id": oid, "customer": customer, "status": "rejected",
+                "subtotal": 0, "discount": 0, "shipping": 0, "total": 0,
+                "items": order.get("items", [])}
+
     subtotal = get_bill(order, products)
-    discount = get_discount(subtotal)
-    shipping = get_shipping(subtotal)
-    
-# Process paid orders and update in stock:
-    if order['payment_status'] == 'paid':
-        for item in order['items']:
-            pro_id = item["product_id"]
-            qty = item["quantity"]
-            products[pro_id]["stock"] -= qty
-        
-        final_paid = subtotal - discount + shipping
-        return {
-            "status": "paid",
-            "revenue": final_paid,
-            "discount": discount,
-            "shipping": shipping
-        }
+    discount = get_discount(subtotal) if apply_discount   else 0.0
+    shipping = get_shipping(subtotal) if include_shipping else 0.0
+    total    = round(subtotal - discount + shipping, 2)
+
+    if payment == "paid":
+        update_inventory(order, products)
+        status = "completed"
+        print(f"  [COMPLETED] {oid} ({customer}) | Subtotal: ${subtotal:.2f}  "
+              f"Discount: ${discount:.2f}  Shipping: ${shipping:.2f}  Total: ${total:.2f}")
     else:
-# Return pending status without updating stock or revenue
-        return {
-            "status": "pending",
-            "revenue": 0,
-            "discount": 0,
-            "shipping": 0
-        }
+        status = "pending"
+        print(f"  [PENDING]   {oid} ({customer}) | Subtotal: ${subtotal:.2f}  Total: ${total:.2f}")
 
-paid_count = 0
-pending_count = 0
-rejected_count = 0
+    return {"order_id": oid, "customer": customer, "status": status,
+            "subtotal": subtotal, "discount": discount, "shipping": shipping,
+            "total": total, "items": order["items"]}
 
-total_revenue = 0
-total_discount = 0
-total_shipping = 0
 
-cust_spending = {}  # total spend per customer
-pro_sales_qty = {}  # total units sold per product
+def build_customer_totals(processed_orders):
+    # only customers who have at least one completed order
+    paying_customers = {o["customer"] for o in processed_orders if o["status"] == "completed"}
+    totals = {}
+    for cust in paying_customers:
+        totals[cust] = sum(o["total"] for o in processed_orders
+                           if o["customer"] == cust and o["status"] == "completed")
+    return totals
 
-# Process all orders one by one
-for order in orders:
-    result = process_order(order, products)
-    
-    if result["status"] == "paid":
-        paid_count += 1
-        total_revenue += result["revenue"]
-        total_discount += result["discount"]
-        total_shipping += result["shipping"]
-        
-# Track customer spending
-        cust_name = order["customer"]
-        if cust_name not in cust_spending:
-            cust_spending[cust_name] = 0
-        cust_spending[cust_name] += result["revenue"]
-        
-# Track product sales quantities
-        for item in order["items"]:
-            p_id = item["product_id"]
-            qty = item["quantity"]
-            if p_id not in pro_sales_qty:
-                pro_sales_qty[p_id] = 0
-            pro_sales_qty[p_id] += qty
-            
-    elif result["status"] == "pending":
-        pending_count += 1
-    else:
-        rejected_count += 1
 
-# 4. REPORT
+def build_product_totals(processed_orders, products):
+    sales = {pid: 0 for pid in products}
+    for order in processed_orders:
+        if order["status"] == "completed":
+            for item in order["items"]:
+                pid = item["product_id"]
+                if pid in sales:
+                    sales[pid] += item["quantity"]
+    return sales
 
-# Find top spending customer
-top_customer = "N/A"
-max_spent = 0
-for cust, spent in cust_spending.items():
-    if spent > max_spent:
-        max_spent = spent
-        top_customer = cust
 
-# Find most sold product by quantity
-top_product = "N/A"
-max_qty = 0
-for p_id, qty in pro_sales_qty.items():
-    if qty > max_qty:
-        max_qty = qty
-        top_product = products[p_id]["name"]
+def find_top(data_dict, name_map=None):
+    if not data_dict:
+        return "N/A"
 
-# Identify low stock items (Stock <= 10)
-low_stock_list = []
-for p_id in products:
-    if products[p_id]["stock"] <= 10:
-        low_stock_list.append(products[p_id]["name"])
-        
-# 5.SALES REPORT
-print(f"""======= SALES REPORT =======
-Total Orders: {len(orders)}
-Paid Orders: {paid_count}
-Pending Orders: {pending_count}
-Rejected Orders: {rejected_count}
-Total Revenue: ${total_revenue:.2f}
-Total Discount: ${total_discount:.2f}
-Total Shipping: ${total_shipping:.2f}
-Top Customer: {top_customer}
-Top Selling Product: {top_product}
+    max_val = max(data_dict.values())
+    if max_val == 0:
+        return "N/A"
+
+    winners = [k for k, v in data_dict.items() if v == max_val]
+
+    if name_map:
+        winners = [name_map.get(k, k) for k in winners]
+
+    if len(winners) == 1:
+        return winners[0]
+    return " & ".join(winners) + " (tied)"
+
+
+def generate_sales_report(processed_orders, products):
+    completed = [o for o in processed_orders if o["status"] == "completed"]
+    pending   = [o for o in processed_orders if o["status"] == "pending"]
+    rejected  = [o for o in processed_orders if o["status"] == "rejected"]
+
+    total_revenue  = sum(o["total"]    for o in completed)
+    total_discount = sum(o["discount"] for o in completed)
+    total_shipping = sum(o["shipping"] for o in completed)
+
+    top_customer = find_top(build_customer_totals(processed_orders))
+
+    product_names = {pid: products[pid]["name"] for pid in products}
+    top_product   = find_top(build_product_totals(processed_orders, products), name_map=product_names)
+
+    low_stock = [(products[pid]["name"], products[pid]["stock"])
+                 for pid in products if products[pid]["stock"] <= LOW_STOCK_THRESHOLD]
+    low_stock.sort(key=lambda x: x[1])
+
+    print()
+    print("=" * 36)
+    print("        SALES REPORT")
+    print("=" * 36)
+    print(f"""Total Orders:     {len(processed_orders)}
+Paid Orders:      {len(completed)}
+Pending Orders:   {len(pending)}
+Rejected Orders:  {len(rejected)}
+Total Revenue:    ${total_revenue:.2f}
+Total Discount:   ${total_discount:.2f}
+Total Shipping:   ${total_shipping:.2f}
+Top Customer:     {top_customer}
+Top Selling:      {top_product}
 Low Stock Products:""")
-if len(low_stock_list) > 0:
-    for prod_name in low_stock_list:
-        print("=>", prod_name)
-else:
-    print("=> None")
+    if low_stock:
+        for name, stock in low_stock:
+            print(f"  - {name} ({stock} left)")
+    else:
+        print("  - None")
+    print("=" * 36)
+
+
+def main():
+    print("Processing Orders...")
+
+    processed = []
+    for order in orders:
+        result = process_order(order, products)
+        processed.append(result)
+
+    generate_sales_report(processed, products)
+
+
+if __name__ == "__main__":
+    main()
